@@ -139,7 +139,7 @@
   function createId() {
     try {
       if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-    } catch (err) { console.warn("Secure ID generation unavailable; using local fallback.", err); }
+    } catch (err) { console.info("Sutra: secure ID generation unavailable; using local fallback.", err); }
     generatedIdCounter += 1;
     return `sutra-${Date.now().toString(36)}-${generatedIdCounter.toString(36)}`;
   }
@@ -161,7 +161,7 @@
       }
     } catch (err) {
       showToast("Could not prepare changes for saving.");
-      console.error("Sutra snapshot failed:", err);
+      console.info("Sutra: changes could not be prepared for saving:", err);
       return false;
     }
     if (!Object.keys(changes).length) return true;
@@ -176,7 +176,7 @@
     } catch (err) {
       for (const key of Object.keys(written)) if (lastSaved[key] === written[key]) delete lastSaved[key];
       showToast("Could not save changes. Check Chrome storage space and try again.");
-      console.error("Sutra storage write failed:", err);
+      console.info("Sutra: storage write failed:", err);
       return false;
     } finally {
       pendingStorageWrites = Math.max(0, pendingStorageWrites - 1);
@@ -362,7 +362,8 @@
     iconSaveTimer = setTimeout(() => {
       const used = new Set(state.bookmarks.map(item => originOf(item.url)));
       for (const origin of Object.keys(iconCache)) if (!used.has(origin)) delete iconCache[origin];
-      storageSet({ [ICON_CACHE_KEY]: iconCache }).catch(err => console.warn("Sutra icon cache write failed:", err));
+      storageSet({ [ICON_CACHE_KEY]: iconCache }).catch(err => console.info("Sutra: icon cache not saved:", err));
+      saveSnapshotSoon();
     }, 800);
   }
   function refreshIcons() {
@@ -638,12 +639,68 @@
       .slice(0, FREQUENT_LIMIT)
       .map(([b]) => b);
   }
-  function renderFrequent() {
-    const row = $("#frequent-row");
+  function frequentHtml() {
     const items = frequentSites();
     // A single site is not much of a list; the row appears once there are two.
-    row.hidden = items.length < 2;
-    row.innerHTML = row.hidden ? "" : `<h2 class="frequent-title">Frequent</h2><div class="frequent-list">${items.map(item => `<div class="frequent-tile" data-bookmark-id="${escapeHtml(item.id)}">${tileLinkHtml(item)}</div>`).join("")}</div>`;
+    return items.length < 2 ? "" : `<h2 class="frequent-title">Frequent</h2><div class="frequent-list">${items.map(item => `<div class="frequent-tile" data-bookmark-id="${escapeHtml(item.id)}">${tileLinkHtml(item)}</div>`).join("")}</div>`;
+  }
+  function renderFrequent() {
+    const row = $("#frequent-row");
+    const html = frequentHtml();
+    const keep = snapshotFrequentHtml !== null && html === snapshotFrequentHtml;
+    snapshotFrequentHtml = null;
+    row.hidden = !html;
+    if (keep) dropFailedIcons(row);
+    else row.innerHTML = html;
+    saveSnapshotSoon();
+  }
+
+  // --- Instant first paint ---
+  // Chrome's storage answers only after the page has started, so the last launchpad drawn
+  // is kept in localStorage (which reads synchronously) and painted straight away. The real
+  // data replaces it a moment later, and when nothing changed the same nodes are kept.
+  const SNAPSHOT_KEY = "sutra_snapshot";
+  const SNAPSHOT_VERSION = 1;
+  let snapshotGridHtml = null;
+  let snapshotFrequentHtml = null;
+  let snapshotTimer = null;
+  function saveSnapshotSoon() {
+    if (!storageLoaded) return;
+    clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => (window.requestIdleCallback || setTimeout)(saveSnapshot), 800);
+  }
+  function saveSnapshot() {
+    try {
+      const quote = state.quoteMode === "off" ? null
+        : state.quoteMode === "newtab" ? quoteStore.pool[0] || quoteStore.current
+        : quoteStore.current;
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ v: SNAPSHOT_VERSION, grid: gridHtml(), frequent: frequentHtml(), quote: quote || null }));
+    } catch {}
+  }
+  function dropFailedIcons(root) {
+    root.querySelectorAll(".tile-icon img").forEach(img => {
+      if (img.complete && !img.naturalWidth) {
+        img.closest(".tile-icon")?.classList.remove("has-icon");
+        img.remove();
+      }
+    });
+  }
+  function paintSnapshot() {
+    let snap = null;
+    try { snap = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null"); } catch {}
+    if (!snap || snap.v !== SNAPSHOT_VERSION || typeof snap.grid !== "string") return;
+    grid.innerHTML = snapshotGridHtml = snap.grid;
+    if (typeof snap.frequent === "string" && snap.frequent) {
+      const row = $("#frequent-row");
+      row.innerHTML = snapshotFrequentHtml = snap.frequent;
+      row.hidden = false;
+    }
+    const quote = snap.quote && cleanQuote(snap.quote.q, snap.quote.a);
+    if (quote) {
+      $("#quote-text").textContent = `“${quote.q}”`;
+      $("#quote-author").textContent = quote.a ? `— ${quote.a}` : "";
+      $("#quote-bar").hidden = false;
+    }
   }
   // Number keys 1–9 open the first nine sites in view; their tooltips say which key.
   function labelShortcutKeys() {
@@ -656,18 +713,13 @@
       link.title = `${link.dataset.title || ""}\nShortcut: ${index + 1}`;
     });
   }
-  function renderGrid() {
+  function gridHtml() {
     const hiddenSet = new Set(state.hiddenCategories || []);
     const byGroup = new Map(categories.map(name => [name, []]));
     for (const item of state.bookmarks) byGroup.get(item.category)?.push(item);
     const canDrag = !state.layoutLocked;
     const showAllGroups = state.bookmarks.length === 0;
-
-    closeMenu();
-    clearTileKeyboardFocus();
-    document.body.classList.toggle("layout-locked", !!state.layoutLocked);
-    searchIndex = new Map(state.bookmarks.map(b => [b.id, [b.name, b.url, b.category, b.note].join("\n").toLowerCase()]));
-    grid.innerHTML = orderedGroupNames().filter(name => !hiddenSet.has(name)).map(name => {
+    return orderedGroupNames().filter(name => !hiddenSet.has(name)).map(name => {
       const items = byGroup.get(name) || [];
       const safeName = escapeHtml(name);
       const classes = ["launch-collection"];
@@ -675,9 +727,23 @@
       if (showAllGroups || revealedGroups.has(name)) classes.push("is-revealed");
       return `<section class="${classes.join(" ")}" data-group-name="${safeName}"><div class="collection-heading" draggable="${canDrag}"><h3>${safeName}<span>${items.length}</span></h3><button type="button" class="collection-manage quiet-icon" aria-label="Manage ${safeName}" title="Group options">•••</button></div><div class="bookmark-grid">${items.map(item => tileHtml(item, canDrag)).join("")}<button type="button" class="add-bookmark-tile" aria-label="Add site to ${safeName}" title="Add site to ${safeName}"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="tile-name">Add site</span></button></div></section>`;
     }).join("");
+  }
+  function renderGrid() {
+    closeMenu();
+    clearTileKeyboardFocus();
+    document.body.classList.toggle("layout-locked", !!state.layoutLocked);
+    searchIndex = new Map(state.bookmarks.map(b => [b.id, [b.name, b.url, b.category, b.note].join("\n").toLowerCase()]));
+    const html = gridHtml();
+    // The first real render usually matches the snapshot already on screen; keeping those
+    // nodes avoids a second layout and reloading every icon image.
+    const keep = snapshotGridHtml !== null && html === snapshotGridHtml;
+    snapshotGridHtml = null;
+    if (keep) dropFailedIcons(grid);
+    else grid.innerHTML = html;
     applySearch();
     renderFrequent();
     if ($("#settings-modal").open) renderManageCategories();
+    saveSnapshotSoon();
   }
   // Filtering toggles existing tiles rather than rebuilding them, so typing never reloads an icon.
   function applySearch() {
@@ -1269,7 +1335,7 @@
           : `Imported ${pendingBookmarks.length}; saving failed. Export a backup and try again.`
       );
     } catch (err) {
-      console.error("Sutra Chrome bookmark import failed:", err);
+      console.info("Sutra: Chrome bookmark import not completed:", err);
       showToast(err.message || "Could not import Chrome bookmarks.");
     } finally {
       button.disabled = false; button.textContent = "Import";
@@ -1290,7 +1356,7 @@
         await writable.close();
         showToast(`Exported to “${backupFolder.name}” as ${fileName}`);
         return;
-      } catch (err) { console.warn("Export to the backup folder failed; downloading instead.", err); }
+      } catch (err) { console.info("Sutra: export to the backup folder failed; downloading instead.", err); }
     }
     const blob = new Blob([text], {type:"application/json"});
     const url = URL.createObjectURL(blob);
@@ -1382,7 +1448,7 @@
       if (restoring) {
         restoreGroupLayout(data.preferences, addedGroups);
         try { await addWallpaperFromDataUrl(data.preferences.backgroundImage); }
-        catch (err) { console.warn("Could not restore the backup's wallpaper:", err); }
+        catch (err) { console.info("Sutra: could not restore the backup's wallpaper:", err); }
         applyPreferences();
         void applyWallpaper();
         scheduleWallpaperTimer();
@@ -1502,7 +1568,7 @@
     if (!backupSupported) return;
     clearTimeout(backupTimer);
     backupTimer = setTimeout(() => {
-      writeBackup().catch(err => { console.error("Sutra folder backup failed:", err); setBackupStatus("error", err.message || "could not write the file."); });
+      writeBackup().catch(err => { console.info("Sutra: folder backup not written:", err); setBackupStatus("error", err.message || "could not write the file."); });
     }, BACKUP_DELAY_MS);
   }
   async function writeBackup({ force = false } = {}) {
@@ -1540,7 +1606,7 @@
         setBackupStatus("saved");
         return true;
       } catch (err) {
-        console.error("Sutra folder backup failed:", err);
+        console.info("Sutra: folder backup not written:", err);
         setBackupStatus("error", err.name === "NotFoundError" ? "the folder was moved or deleted." : (err.message || "could not write the file."));
         return false;
       }
@@ -1601,7 +1667,7 @@
   async function connectBackupFolder(folder, parent) {
     backupFolder = folder; backupParent = parent; backupStatus = "off";
     try { await handleStore("readwrite", store => store.put({ folder, parent }, "backupFolder")); }
-    catch (err) { console.warn("Could not remember the backup folder:", err); }
+    catch (err) { console.info("Sutra: could not remember the backup folder:", err); }
     bumpBackupGeneration();
     try { localStorage.removeItem(BACKUP_STATUS_KEY); } catch {}
   }
@@ -1630,7 +1696,7 @@
       renderBackupSettings();
       if (saved) showToast(`Backups will be saved to “${folder.name}” automatically`);
     } catch (err) {
-      console.error("Sutra backup folder setup failed:", err);
+      console.info("Sutra: backup folder not set up:", err);
       showToast("Could not use that folder. Try another one, such as Documents.");
     }
   }
@@ -1663,7 +1729,7 @@
   function wireBackupSettings() {
     // Folder access can fail at any step (folder moved, permission revoked); say so instead of an uncaught error.
     const guarded = action => () => action().catch(err => {
-      console.error("Sutra backup folder action failed:", err);
+      console.info("Sutra: backup folder action not completed:", err);
       showToast("Could not reach the backup folder. Choose it again in Settings › Library.");
     });
     $("#backup-choose-btn").addEventListener("click", guarded(chooseBackupFolder));
@@ -1673,7 +1739,7 @@
   }
   async function startBackupFolder() {
     try { await writeBackup(); }
-    catch (err) { console.warn("Sutra backup folder unavailable:", err); }
+    catch (err) { console.info("Sutra: backup folder unavailable:", err); }
   }
 
   // --- Wallpapers ---
@@ -1827,7 +1893,7 @@
     try {
       if (fromTimer) {
         // Another open tab may have changed it already; follow that instead of skipping ahead twice.
-        const stored = await storageGet(["wallpaperChangedAt"]);
+        const stored = await storageGet(["wallpaperChangedAt"]).catch(() => ({}));
         const interval = WALLPAPER_INTERVALS[state.wallpaperMode];
         if (interval && Date.now() - (stored.wallpaperChangedAt || 0) < interval - 2000) { scheduleWallpaperTimer(); return; }
       }
@@ -1917,7 +1983,7 @@
           const id = createId();
           await writeWallpaperBlob(wallpaperPath(id), await resizeWallpaper(file));
           added.push(id);
-        } catch (err) { console.warn("Sutra wallpaper skipped:", file.name, err); }
+        } catch (err) { console.info("Sutra: wallpaper skipped:", file.name, err); }
       }
       if (!added.length) { showToast("Could not use that image. Try a different one."); return; }
       state.wallpapers.push(...added);
@@ -2055,7 +2121,7 @@
   async function startWallpapers() {
     try {
       if (await migrateLegacyWallpaper()) void persist();
-    } catch (err) { console.warn("Sutra wallpaper migration failed:", err); }
+    } catch (err) { console.info("Sutra: wallpaper migration skipped:", err); }
     const boot = await (window.__sutraWallpaper || Promise.resolve(null));
     if (boot) shownWallpaper = boot;
     if (Date.now() >= wallpaperDueAt()) await advanceWallpaper();
@@ -2131,6 +2197,7 @@
   }
   function saveQuotes() {
     storageSet({ [QUOTES_KEY]: quoteStore }).catch(err => noteNetworkIssue("quote cache", err));
+    saveSnapshotSoon();
   }
   function refillQuotes() {
     if (quoteFetching) return quoteFetching;
@@ -2173,8 +2240,12 @@
       quoteStore.shownAt = Date.now();
       saveQuotes();
       const bar = $("#quote-bar");
-      bar.classList.add("is-changing");
-      setTimeout(() => { renderQuote(); bar.classList.remove("is-changing"); }, bar.hidden ? 0 : 180);
+      // The quote painted from the snapshot is usually this very one: show it without a fade.
+      if (bar.hidden || $("#quote-text").textContent === `“${next.q}”`) renderQuote();
+      else {
+        bar.classList.add("is-changing");
+        setTimeout(() => { renderQuote(); bar.classList.remove("is-changing"); }, 180);
+      }
       if (quoteStore.pool.length < QUOTE_REFILL_AT) void refillQuotes();
     } finally {
       quoteBusy = false;
@@ -2212,11 +2283,17 @@
   }
   async function startQuotes(saved) {
     quoteStore = cleanQuoteStore(saved);
-    // Show the last quote at once, so the line is never empty while a new one loads.
-    renderQuote();
+    // Show the last quote at once, so the line is never empty while a new one loads; in
+    // "every new tab" mode the next one is already on screen from the snapshot.
+    if (state.quoteMode !== "newtab" || !quoteStore.pool.length) renderQuote();
     await applyQuoteMode();
   }
   function wireQuotes() {
+    // Back online: fill an empty quote line straight away.
+    window.addEventListener("online", () => {
+      if (state.quoteMode !== "off" && !quoteStore.current) void advanceQuote();
+      else if (state.quoteMode !== "off" && quoteStore.pool.length < QUOTE_REFILL_AT) void refillQuotes();
+    });
     $("#quote-next").addEventListener("click", () => { void advanceQuote({ manual: true }); });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden || !isInitialized || !QUOTE_INTERVALS[state.quoteMode]) return;
@@ -2240,26 +2317,41 @@
     clockTimer = null;
     if (!state.showClock) return;
     const now = new Date();
-    $("#clock-time").textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    $("#clock-time").dateTime = now.toISOString();
-    $("#clock-sub").textContent = `${greetingFor(now.getHours())} · ${now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}`;
+    const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const sub = `${greetingFor(now.getHours())} · ${now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}`;
+    if ($("#clock-time").textContent !== time) { $("#clock-time").textContent = time; $("#clock-time").dateTime = now.toISOString(); }
+    if ($("#clock-sub").textContent !== sub) $("#clock-sub").textContent = sub;
     // Wake just after the next minute begins rather than polling every second.
     clockTimer = setTimeout(renderClock, 60050 - (now.getSeconds() * 1000 + now.getMilliseconds()));
   }
 
+  // Writing a class, attribute or CSS variable, even with the value it already has, makes
+  // Chrome restyle every tile. These touch the page only when something really changed.
+  function setBodyData(name, value) {
+    if (value === null) { if (name in document.body.dataset) delete document.body.dataset[name]; }
+    else if (document.body.dataset[name] !== value) document.body.dataset[name] = value;
+  }
+  function setRootVar(name, value) {
+    const root = document.documentElement.style;
+    if (value === null) { if (root.getPropertyValue(name)) root.removeProperty(name); }
+    else if (root.getPropertyValue(name) !== value) root.setProperty(name, value);
+  }
+  function setBodyClass(name, on) {
+    if (document.body.classList.contains(name) !== on) document.body.classList.toggle(name, on);
+  }
   function applyPreferences() {
-    document.body.classList.toggle("light-theme", state.theme === "light");
-    document.body.dataset.accent = state.accentColor || "emerald";
+    setBodyClass("light-theme", state.theme === "light");
+    setBodyData("accent", state.accentColor || "emerald");
     // Icons-only mode hides the labels with CSS, so no grid rebuild is needed.
-    document.body.classList.toggle("hide-site-names", state.showNames === false);
-    document.body.classList.toggle("no-clock", !state.showClock);
-    document.body.dataset.density = state.density;
-    if (state.groupColumns === "auto") delete document.body.dataset.columns;
-    else document.body.dataset.columns = state.groupColumns;
-    document.documentElement.style.setProperty("--group-columns", state.groupColumns === "auto" ? "auto" : state.groupColumns);
-    $("#empty-state span").textContent = `Press Enter to search ${(SEARCH_ENGINES[state.searchEngine] || SEARCH_ENGINES.google)[0]}.`;
+    setBodyClass("hide-site-names", state.showNames === false);
+    setBodyClass("no-clock", !state.showClock);
+    setBodyData("density", state.density);
+    setBodyData("columns", state.groupColumns === "auto" ? null : state.groupColumns);
+    setRootVar("--group-columns", state.groupColumns === "auto" ? null : state.groupColumns);
+    const searchHint = `Press Enter to search ${(SEARCH_ENGINES[state.searchEngine] || SEARCH_ENGINES.google)[0]}.`;
+    if ($("#empty-state span").textContent !== searchHint) $("#empty-state span").textContent = searchHint;
     renderClock();
-    document.documentElement.style.setProperty("--icon-size", `${state.iconSize || 48}px`);
+    setRootVar("--icon-size", `${state.iconSize || 48}px`);
     $("#theme-btn").setAttribute("aria-label", state.theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
     updateAccentPickerUI();
     writeBootHints();
@@ -2604,7 +2696,7 @@
     try {
       session.start();
     } catch (err) {
-      console.warn("Sutra voice search failed to start:", err);
+      console.info("Sutra: voice search did not start:", err);
       recognition = null;
       setVoiceListening(false);
       showToast(voiceErrorMessage(""));
@@ -2652,7 +2744,7 @@
     syncLaunchpadControls();
     void renderWallpaperSettings();
     renderBackupSettings();
-    refreshBackupFolder().then(renderBackupSettings, err => console.warn("Sutra backup folder unavailable:", err));
+    refreshBackupFolder().then(renderBackupSettings, err => console.info("Sutra: backup folder unavailable:", err));
     openModal("settings-modal");
   }
   function wireEvents() {
@@ -2705,7 +2797,7 @@
     $("#refresh-icons-btn").addEventListener("click", () => { refreshIcons(); showToast("Fetching site icons again"); });
     $("#import-chrome-btn").addEventListener("click", importFromChrome);
     $("#settings-export-btn").addEventListener("click", () => {
-      exportBackup().catch(err => { console.error("Sutra export failed:", err); showToast("Could not export the backup."); });
+      exportBackup().catch(err => { console.info("Sutra: export failed:", err); showToast("Could not export the backup."); });
     });
     $("#import-file").addEventListener("change", e => importBackup(e.target.files[0]));
     wireWallpaperSettings();
@@ -2738,12 +2830,13 @@
     });
 
     $("#weather-widget").addEventListener("click", () => toggleWeatherPopover());
+    window.addEventListener("online", () => { void fetchWeather(); });
     const refreshBtn = $("#weather-refresh-btn");
     refreshBtn.addEventListener("click", () => {
       refreshBtn.textContent = "…";
       void fetchWeather(true).finally(() => { refreshBtn.textContent = "↻"; });
     });
-    $("#weather-unit-toggle").addEventListener("click", () => { toggleWeatherUnit().catch(err => console.warn("Sutra weather unit:", err)); });
+    $("#weather-unit-toggle").addEventListener("click", () => { toggleWeatherUnit().catch(err => noteNetworkIssue("weather unit", err)); });
 
     wireAskDialog();
     wireVoiceSearch();
@@ -2893,7 +2986,7 @@
       await persist();
     } catch (err) {
       // Do not blank the working page when transient storage reads fail.
-      console.error(`Sutra storage sync failed (${reason}):`, err);
+      console.info(`Sutra: storage sync will retry (${reason}):`, err);
       if (!storageLoaded) {
         const delay = Math.min(30000, 1000 * 2 ** storageRetries++);
         setTimeout(() => scheduleStorageSync("retry-load"), delay);
@@ -3047,6 +3140,12 @@
 
     if (cached) renderWeatherUI(cached, unit);
     if (!forceRefresh && cached?.timestamp && Date.now() - cached.timestamp < WEATHER_CACHE_TTL) return;
+    // Offline every request would fail; keep what is shown and try again once back online.
+    if (!navigator.onLine) {
+      if (!cached) $("#weather-city").textContent = "Offline";
+      if (forceRefresh) showToast("You are offline. Weather updates when the connection is back.");
+      return;
+    }
     if (!cached) $("#weather-city").textContent = "Locating…";
 
     try {
@@ -3065,6 +3164,10 @@
   async function init() {
     let firstRun = false;
     let savedQuotes = null;
+    performance.mark("sutra:start");
+    paintSnapshot();
+    renderClock();
+    performance.mark("sutra:painted");
     try {
       const data = await storageGet([...STORAGE_KEYS, ICON_CACHE_KEY, USAGE_KEY, QUOTES_KEY]);
       savedQuotes = data[QUOTES_KEY];
@@ -3076,7 +3179,7 @@
       storageLoaded = true;
       void persist();
     } catch (err) {
-      console.error("Could not initialise Sutra storage:", err);
+      console.info("Sutra: saved data not readable yet, retrying:", err);
       storageSyncPending = true;
       showToast("Sutra could not read saved data. Retrying automatically.");
     }
@@ -3084,6 +3187,7 @@
     applyPreferences();
     wireEvents();
     renderAll();
+    performance.mark("sutra:ready");
     isInitialized = true;
     void startWallpapers();
     startQuotes(savedQuotes).catch(err => noteNetworkIssue("quotes", err));
@@ -3095,6 +3199,17 @@
       scheduleStorageSync("startup-queued");
     }
   }
+  window.addEventListener("unhandledrejection", e => {
+    e.preventDefault();
+    console.info("Sutra: unexpected async failure (handled):", e.reason);
+  });
+  window.addEventListener("error", e => {
+    // Resource load errors (an icon that 404s) also arrive here and need no report.
+    if (!(e instanceof ErrorEvent)) return;
+    e.preventDefault();
+    console.info("Sutra: unexpected error (handled):", e.error || e.message);
+  });
+
   // Register listeners synchronously so the first pageshow/focus is not missed
   // while the initial asynchronous Chrome storage read is still pending.
   wireLifecycleSync();

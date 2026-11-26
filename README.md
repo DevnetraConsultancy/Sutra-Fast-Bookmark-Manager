@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.22.0-1f3a8a?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.23.0-1f3a8a?style=for-the-badge">
   <img alt="Chrome" src="https://img.shields.io/badge/Chrome-111%2B-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white">
   <img alt="Manifest V3" src="https://img.shields.io/badge/Manifest-V3-0f9d58?style=for-the-badge">
   <img alt="Local first" src="https://img.shields.io/badge/data-stays%20on%20device-b9f27c?style=for-the-badge&labelColor=17210d">
@@ -59,6 +59,7 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | 💬 | **Quotes** | A line from a scientist, writer or thinker at the bottom of the screen. New on every tab, every 5–30 minutes, hourly or daily. |
 | 🌐 | **Your search engine** | Google, Bing, DuckDuckGo or Brave Search for web searches. |
 | 📐 | **Columns and density** | Fix the number of group columns, or switch to a compact layout. |
+| ⚡ | **Instant start** | The last launchpad is painted the moment a tab opens, then refreshed. Works offline with no error noise. |
 
 <p align="center">
   <img src="docs/screenshots/launchpad-light.png" alt="Sutra in light theme" width="900">
