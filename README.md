@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.20.0-1f3a8a?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.21.0-1f3a8a?style=for-the-badge">
   <img alt="Chrome" src="https://img.shields.io/badge/Chrome-111%2B-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white">
   <img alt="Manifest V3" src="https://img.shields.io/badge/Manifest-V3-0f9d58?style=for-the-badge">
   <img alt="Local first" src="https://img.shields.io/badge/data-stays%20on%20device-b9f27c?style=for-the-badge&labelColor=17210d">
@@ -53,6 +53,11 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | 🔒 | **Drag lock** | Stops sites being moved by accident. |
 | 🧩 | **Icons-only mode** | Hide site names for a clean grid of icons. Names still show on hover. |
 | ↗️ | **Same tab or new tab** | Choose where a site opens. Ctrl-click always opens a new tab. |
+| ⭐ | **Frequent sites** | Your most-opened sites in a row on top, counted on this device only. |
+| 🔢 | **Number keys** | Press **1–9** to open the first nine sites instantly. |
+| 🕒 | **Clock and greeting** | Time, date and a friendly greeting above your sites. |
+| 🌐 | **Your search engine** | Google, Bing, DuckDuckGo or Brave Search for web searches. |
+| 📐 | **Columns and density** | Fix the number of group columns, or switch to a compact layout. |
 
 <p align="center">
   <img src="docs/screenshots/launchpad-light.png" alt="Sutra in light theme" width="900">

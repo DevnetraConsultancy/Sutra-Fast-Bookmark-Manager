@@ -6,6 +6,12 @@ try {
   if (boot.theme === "light") document.body.classList.add("light-theme");
   if (boot.accent) document.body.dataset.accent = boot.accent;
   if (boot.hideNames) document.body.classList.add("hide-site-names");
+  if (boot.noClock) document.body.classList.add("no-clock");
+  if (boot.density) document.body.dataset.density = boot.density;
+  if (boot.columns) {
+    document.body.dataset.columns = boot.columns;
+    document.documentElement.style.setProperty("--group-columns", boot.columns);
+  }
   if (boot.iconSize) document.documentElement.style.setProperty("--icon-size", `${boot.iconSize}px`);
 
   // In "every new tab" mode this load is about to switch wallpaper, so show that one now.

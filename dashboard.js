@@ -8,8 +8,17 @@
   const ACCENTS = ["emerald", "gold", "cyan", "violet", "crimson"];
   // Where a clicked site opens: a new browser tab (the original behaviour) or this tab.
   const LINK_TARGETS = ["newtab", "same"];
+  // Web search used when nothing in the library matches. Each value: [label, query URL prefix].
+  const SEARCH_ENGINES = {
+    google: ["Google", "https://www.google.com/search?q="],
+    bing: ["Bing", "https://www.bing.com/search?q="],
+    duckduckgo: ["DuckDuckGo", "https://duckduckgo.com/?q="],
+    brave: ["Brave Search", "https://search.brave.com/search?q="]
+  };
+  const DENSITIES = ["comfortable", "compact"];
+  const GROUP_COLUMNS = ["auto", "1", "2", "3", "4", "5", "6"];
   let categories = [...defaultCategories];
-  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, linkTarget: "newtab", showNames: true, wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
+  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, linkTarget: "newtab", showNames: true, searchEngine: "google", showClock: true, showFrequent: true, numberKeys: true, density: "comfortable", groupColumns: "auto", wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
   let toastTimer;
   let isInitialized = false;
   let storageSyncRunning = false;
@@ -27,7 +36,7 @@
   let searchIndex = new Map();
 
   // Wallpaper images themselves live in Cache Storage; only their list and settings are here.
-  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","linkTarget","showNames","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
+  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","linkTarget","showNames","searchEngine","showClock","showFrequent","numberKeys","density","groupColumns","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
   const storageGet = (keys) => new Promise((resolve, reject) => chrome.storage.local.get(keys, result => {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message || "Chrome storage read failed."));
@@ -64,7 +73,8 @@
   const noteNetworkIssue = (what, err) => console.info(`Sutra: ${what} unavailable (${err && err.message || err}).`);
   const PICSUM_ORIGINS = ["https://picsum.photos/*", "https://fastly.picsum.photos/*"];
   const opensInNewTab = () => state.linkTarget !== "same";
-  // Opens a web address the way the user chose in Settings › Appearance.
+  const webSearchUrl = query => (SEARCH_ENGINES[state.searchEngine] || SEARCH_ENGINES.google)[1] + encodeURIComponent(query);
+  // Opens a web address the way the user chose in Settings › Launchpad.
   function openUrl(url) {
     if (opensInNewTab()) window.open(url, "_blank", "noopener,noreferrer");
     else location.assign(url);
@@ -106,6 +116,12 @@
       iconLookup: state.iconLookup,
       linkTarget: state.linkTarget,
       showNames: state.showNames,
+      searchEngine: state.searchEngine,
+      showClock: state.showClock,
+      showFrequent: state.showFrequent,
+      numberKeys: state.numberKeys,
+      density: state.density,
+      groupColumns: state.groupColumns,
       wallpapers: state.wallpapers,
       wallpaperMode: state.wallpaperMode,
       wallpaperOnline: state.wallpaperOnline,
@@ -331,8 +347,8 @@
     return `<img src="${escapeHtml(src)}" alt="" width="128" height="128" loading="eager" decoding="async" draggable="false" referrerpolicy="no-referrer" data-icon-origin="${escapeHtml(origin)}">`;
   }
   function paintIcon(origin) {
-    grid.querySelectorAll(`.tile-icon[data-origin="${CSS.escape(origin)}"]`).forEach(box => {
-      const item = state.bookmarks.find(b => b.id === box.closest(".bookmark-tile")?.dataset.bookmarkId);
+    document.querySelectorAll(`.tile-icon[data-origin="${CSS.escape(origin)}"]`).forEach(box => {
+      const item = state.bookmarks.find(b => b.id === box.closest("[data-bookmark-id]")?.dataset.bookmarkId);
       const src = item ? iconSrcFor(item, origin) : "";
       box.querySelector("img")?.remove();
       box.classList.toggle("has-icon", !!src);
@@ -567,7 +583,7 @@
   }
 
   // --- Rendering ---
-  function tileHtml(item, canDrag) {
+  function tileLinkHtml(item) {
     const origin = originOf(item.url);
     const src = iconSrcFor(item, origin);
     const label = (item.name || "?").trim();
@@ -575,7 +591,68 @@
     const title = item.note ? `${item.name}\n${item.note}` : item.name;
     // Ctrl/⌘-click and middle-click still open a background tab in "same tab" mode.
     const target = opensInNewTab() ? ` target="_blank"` : "";
-    return `<article class="bookmark-tile" data-bookmark-id="${escapeHtml(item.id)}" draggable="${canDrag}"><a class="tile-open" draggable="false" href="${escapeHtml(item.url)}"${target} rel="noopener noreferrer" title="${escapeHtml(title)}" aria-label="${escapeHtml(item.name)}"><span class="tile-icon${src ? " has-icon" : ""}" data-origin="${escapeHtml(origin)}" style="--hue:${hueFor(origin)}"><span class="tile-initial">${initial}</span>${src ? iconImageHtml(src, origin) : ""}</span><span class="tile-name">${escapeHtml(item.name)}</span></a><button class="tile-menu quiet-icon" type="button" aria-label="Actions for ${escapeHtml(item.name)}" title="Edit, move or delete">•••</button></article>`;
+    return `<a class="tile-open" draggable="false" href="${escapeHtml(item.url)}"${target} rel="noopener noreferrer" title="${escapeHtml(title)}" data-title="${escapeHtml(title)}" aria-label="${escapeHtml(item.name)}"><span class="tile-icon${src ? " has-icon" : ""}" data-origin="${escapeHtml(origin)}" style="--hue:${hueFor(origin)}"><span class="tile-initial">${initial}</span>${src ? iconImageHtml(src, origin) : ""}</span><span class="tile-name">${escapeHtml(item.name)}</span></a>`;
+  }
+  function tileHtml(item, canDrag) {
+    return `<article class="bookmark-tile" data-bookmark-id="${escapeHtml(item.id)}" draggable="${canDrag}">${tileLinkHtml(item)}<button class="tile-menu quiet-icon" type="button" aria-label="Actions for ${escapeHtml(item.name)}" title="Edit, move or delete">•••</button></article>`;
+  }
+
+  // --- Frequent sites ---
+  // How often each site is opened, counted on this device only. Kept apart from the library
+  // so a click never rewrites the backup, and older visits count for less over time.
+  const USAGE_KEY = "sutra_usage";
+  const FREQUENT_LIMIT = 8;
+  const USAGE_HALF_LIFE = 30 * 24 * 60 * 60 * 1000;
+  let siteUsage = {};
+  let usageJson = "{}";
+  // Reading keeps every well-formed entry: another tab's usage can arrive before its new
+  // sites do. Entries for deleted sites are dropped only when this tab writes.
+  function cleanUsage(raw, prune = false) {
+    const ids = new Set(state.bookmarks.map(b => b.id));
+    const clean = {};
+    if (raw && typeof raw === "object") {
+      for (const [id, entry] of Object.entries(raw)) {
+        if ((!prune || ids.has(id)) && Number.isFinite(entry?.n) && entry.n > 0) clean[id] = { n: Math.min(entry.n, 1e6), at: Number(entry.at) || 0 };
+      }
+    }
+    return clean;
+  }
+  function recordOpen(id) {
+    if (!id || !state.bookmarks.some(b => b.id === id)) return;
+    const entry = siteUsage[id] || { n: 0, at: 0 };
+    siteUsage = cleanUsage({ ...siteUsage, [id]: { n: entry.n + 1, at: Date.now() } }, true);
+    usageJson = JSON.stringify(siteUsage);
+    // The row is not redrawn here, so tiles never jump about under the pointer.
+    storageSet({ [USAGE_KEY]: siteUsage }).catch(err => noteNetworkIssue("usage count", err));
+  }
+  function frequentSites() {
+    if (!state.showFrequent) return [];
+    const hiddenSet = new Set(state.hiddenCategories || []);
+    const now = Date.now();
+    return state.bookmarks
+      .filter(b => siteUsage[b.id] && !hiddenSet.has(b.category))
+      .map(b => [b, siteUsage[b.id].n * 0.5 ** (Math.max(0, now - siteUsage[b.id].at) / USAGE_HALF_LIFE)])
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, FREQUENT_LIMIT)
+      .map(([b]) => b);
+  }
+  function renderFrequent() {
+    const row = $("#frequent-row");
+    const items = frequentSites();
+    // A single site is not much of a list; the row appears once there are two.
+    row.hidden = items.length < 2;
+    row.innerHTML = row.hidden ? "" : `<h2 class="frequent-title">Frequent</h2><div class="frequent-list">${items.map(item => `<div class="frequent-tile" data-bookmark-id="${escapeHtml(item.id)}">${tileLinkHtml(item)}</div>`).join("")}</div>`;
+  }
+  // Number keys 1–9 open the first nine sites in view; their tooltips say which key.
+  function labelShortcutKeys() {
+    grid.querySelectorAll("a.tile-open[data-key]").forEach(link => { delete link.dataset.key; link.title = link.dataset.title || ""; });
+    if (!state.numberKeys) return;
+    getVisibleTiles().slice(0, 9).forEach((tile, index) => {
+      const link = tile.querySelector("a.tile-open");
+      if (!link) return;
+      link.dataset.key = String(index + 1);
+      link.title = `${link.dataset.title || ""}\nShortcut: ${index + 1}`;
+    });
   }
   function renderGrid() {
     const hiddenSet = new Set(state.hiddenCategories || []);
@@ -597,6 +674,7 @@
       return `<section class="${classes.join(" ")}" data-group-name="${safeName}"><div class="collection-heading" draggable="${canDrag}"><h3>${safeName}<span>${items.length}</span></h3><button type="button" class="collection-manage quiet-icon" aria-label="Manage ${safeName}" title="Group options">•••</button></div><div class="bookmark-grid">${items.map(item => tileHtml(item, canDrag)).join("")}<button type="button" class="add-bookmark-tile" aria-label="Add site to ${safeName}" title="Add site to ${safeName}"><span class="tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="tile-name">Add site</span></button></div></section>`;
     }).join("");
     applySearch();
+    renderFrequent();
     if ($("#settings-modal").open) renderManageCategories();
   }
   // Filtering toggles existing tiles rather than rebuilding them, so typing never reloads an icon.
@@ -616,6 +694,7 @@
       matches += visible;
     });
     $("#empty-state").hidden = !query || matches > 0;
+    labelShortcutKeys();
   }
   function renderAll() { refreshCategories(); renderGrid(); queueIconResolution(); }
   function bookmarkById(id) { return state.bookmarks.find(b => b.id === id); }
@@ -651,11 +730,23 @@
       }
     });
     // Image errors do not bubble, so a single capturing listener covers every tile.
-    grid.addEventListener("error", e => {
+    const dropBrokenIcon = e => {
       if (e.target.tagName !== "IMG") return;
       e.target.closest(".tile-icon")?.classList.remove("has-icon");
       e.target.remove();
-    }, true);
+    };
+    grid.addEventListener("error", dropBrokenIcon, true);
+    $("#frequent-row").addEventListener("error", dropBrokenIcon, true);
+    // Count every way a site is opened: click, Ctrl/⌘-click, middle-click and keyboard.
+    const countOpen = e => {
+      if (e.type === "auxclick" && e.button !== 1) return;
+      const link = e.target.closest?.("a.tile-open");
+      if (link) recordOpen(link.closest("[data-bookmark-id]")?.dataset.bookmarkId);
+    };
+    for (const host of [grid, $("#frequent-row")]) {
+      host.addEventListener("click", countOpen);
+      host.addEventListener("auxclick", countOpen);
+    }
   }
 
   // --- Drag and drop ---
@@ -1183,7 +1274,7 @@
     }
   }
   function backupData(backgroundImage) {
-    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup, linkTarget: state.linkTarget, showNames: state.showNames } };
+    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup, linkTarget: state.linkTarget, showNames: state.showNames, searchEngine: state.searchEngine, showClock: state.showClock, showFrequent: state.showFrequent, numberKeys: state.numberKeys, density: state.density, groupColumns: state.groupColumns } };
   }
   async function exportBackup() {
     const backup = backupData(await currentWallpaperDataUrl());
@@ -1332,6 +1423,10 @@
     if (typeof prefs.layoutLocked === "boolean") state.layoutLocked = prefs.layoutLocked;
     if (LINK_TARGETS.includes(prefs.linkTarget)) state.linkTarget = prefs.linkTarget;
     if (typeof prefs.showNames === "boolean") state.showNames = prefs.showNames;
+    if (Object.hasOwn(SEARCH_ENGINES, prefs.searchEngine)) state.searchEngine = prefs.searchEngine;
+    for (const key of ["showClock", "showFrequent", "numberKeys"]) if (typeof prefs[key] === "boolean") state[key] = prefs[key];
+    if (DENSITIES.includes(prefs.density)) state.density = prefs.density;
+    if (GROUP_COLUMNS.includes(prefs.groupColumns)) state.groupColumns = prefs.groupColumns;
     if (WALLPAPER_MODES.includes(prefs.wallpaperMode)) state.wallpaperMode = prefs.wallpaperMode;
     if (typeof prefs.wallpaperOnline === "boolean") state.wallpaperOnline = prefs.wallpaperOnline;
     if (Array.isArray(prefs.hiddenCategories)) state.hiddenCategories = prefs.hiddenCategories.filter(c => typeof c === "string").slice(0, 100);
@@ -1776,6 +1871,9 @@
       accent: state.accentColor,
       iconSize: state.iconSize,
       hideNames: state.showNames === false,
+      noClock: !state.showClock,
+      density: state.density,
+      columns: state.groupColumns === "auto" ? "" : state.groupColumns,
       wallpaper: hint(state.wallpaperCurrent, state.wallpaperChangedAt)
     };
     if (wallpaperRotates() && state.wallpaperMode === "newtab") {
@@ -1977,11 +2075,35 @@
     return blob ? blobToDataUrl(blob) : "";
   }
 
+  // --- Clock and greeting ---
+  let clockTimer = null;
+  function greetingFor(hour) {
+    return hour < 5 ? "Good night" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : hour < 22 ? "Good evening" : "Good night";
+  }
+  function renderClock() {
+    clearTimeout(clockTimer);
+    clockTimer = null;
+    if (!state.showClock) return;
+    const now = new Date();
+    $("#clock-time").textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    $("#clock-time").dateTime = now.toISOString();
+    $("#clock-sub").textContent = `${greetingFor(now.getHours())} · ${now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}`;
+    // Wake just after the next minute begins rather than polling every second.
+    clockTimer = setTimeout(renderClock, 60050 - (now.getSeconds() * 1000 + now.getMilliseconds()));
+  }
+
   function applyPreferences() {
     document.body.classList.toggle("light-theme", state.theme === "light");
     document.body.dataset.accent = state.accentColor || "emerald";
     // Icons-only mode hides the labels with CSS, so no grid rebuild is needed.
     document.body.classList.toggle("hide-site-names", state.showNames === false);
+    document.body.classList.toggle("no-clock", !state.showClock);
+    document.body.dataset.density = state.density;
+    if (state.groupColumns === "auto") delete document.body.dataset.columns;
+    else document.body.dataset.columns = state.groupColumns;
+    document.documentElement.style.setProperty("--group-columns", state.groupColumns === "auto" ? "auto" : state.groupColumns);
+    $("#empty-state span").textContent = `Press Enter to search ${(SEARCH_ENGINES[state.searchEngine] || SEARCH_ENGINES.google)[0]}.`;
+    renderClock();
     document.documentElement.style.setProperty("--icon-size", `${state.iconSize || 48}px`);
     $("#theme-btn").setAttribute("aria-label", state.theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
     updateAccentPickerUI();
@@ -2157,7 +2279,7 @@
           if (!query) return;
           e.preventDefault();
           if (getVisibleTiles().length) openTile(0);
-          else openUrl("https://www.google.com/search?q=" + encodeURIComponent(query));
+          else openUrl(webSearchUrl(query));
         } else if (e.key === "Escape") {
           if (searchInput.value) {
             searchInput.value = "";
@@ -2209,6 +2331,16 @@
         return;
       }
 
+      if (state.numberKeys && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const index = Number(e.key) - 1;
+        if (getVisibleTiles()[index]) {
+          e.preventDefault();
+          clearTileKeyboardFocus();
+          openTile(index);
+          return;
+        }
+      }
+
       // Typing anywhere starts a search.
       if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
         clearTileKeyboardFocus();
@@ -2240,7 +2372,8 @@
     searchInput.value = query;
     applySearch();
     const link = getVisibleTiles()[0]?.querySelector("a.tile-open");
-    location.assign(link ? link.href : "https://www.google.com/search?q=" + encodeURIComponent(query));
+    if (link) recordOpen(link.closest("[data-bookmark-id]")?.dataset.bookmarkId);
+    location.assign(link ? link.href : webSearchUrl(query));
   }
   // Extension pages are refused speech recognition until the microphone itself has been
   // allowed, so ask for it directly first; that is what shows Chrome's permission prompt.
@@ -2342,6 +2475,14 @@
     pop.hidden = !next;
     $("#weather-widget").setAttribute("aria-expanded", String(next));
   }
+  function syncLaunchpadControls() {
+    $("#clock-toggle").checked = !!state.showClock;
+    $("#frequent-toggle").checked = !!state.showFrequent;
+    $("#number-keys-toggle").checked = !!state.numberKeys;
+    $("#search-engine").value = state.searchEngine;
+    $("#density").value = state.density;
+    $("#group-columns").value = state.groupColumns;
+  }
   function openSettings() {
     renderManageCategories();
     renderHealthAuditUI();
@@ -2352,6 +2493,7 @@
     $("#icon-lookup-toggle").checked = !!state.iconLookup;
     $("#link-target").value = state.linkTarget;
     $("#show-names-toggle").checked = state.showNames !== false;
+    syncLaunchpadControls();
     void renderWallpaperSettings();
     renderBackupSettings();
     refreshBackupFolder().then(renderBackupSettings, err => console.warn("Sutra backup folder unavailable:", err));
@@ -2375,6 +2517,19 @@
       void persist();
     });
     $("#layout-lock-toggle").addEventListener("change", e => { state.layoutLocked = !!e.target.checked; renderGrid(); void persist(); });
+    $("#clock-toggle").addEventListener("change", e => { state.showClock = !!e.target.checked; applyPreferences(); void persist(); });
+    $("#frequent-toggle").addEventListener("change", e => { state.showFrequent = !!e.target.checked; renderFrequent(); void persist(); });
+    $("#frequent-reset").addEventListener("click", async () => {
+      if (!await ask({ title: "Reset frequent sites?", message: "Sutra forgets how often each site was opened. Your sites stay.", okLabel: "Reset" })) return;
+      siteUsage = {}; usageJson = "{}";
+      storageSet({ [USAGE_KEY]: {} }).catch(err => noteNetworkIssue("usage count", err));
+      renderFrequent();
+      showToast("Frequent sites reset");
+    });
+    $("#number-keys-toggle").addEventListener("change", e => { state.numberKeys = !!e.target.checked; labelShortcutKeys(); void persist(); });
+    $("#search-engine").addEventListener("change", e => { if (!Object.hasOwn(SEARCH_ENGINES, e.target.value)) return; state.searchEngine = e.target.value; applyPreferences(); void persist(); });
+    $("#density").addEventListener("change", e => { if (!DENSITIES.includes(e.target.value)) return; state.density = e.target.value; applyPreferences(); void persist(); });
+    $("#group-columns").addEventListener("change", e => { if (!GROUP_COLUMNS.includes(e.target.value)) return; state.groupColumns = e.target.value; applyPreferences(); void persist(); });
     $("#show-names-toggle").addEventListener("change", e => { state.showNames = !!e.target.checked; applyPreferences(); void persist(); });
     $("#link-target").addEventListener("change", e => {
       if (!LINK_TARGETS.includes(e.target.value)) return;
@@ -2480,6 +2635,12 @@
     state.iconLookup = data.iconLookup === true;
     state.linkTarget = LINK_TARGETS.includes(data.linkTarget) ? data.linkTarget : "newtab";
     state.showNames = data.showNames !== false;
+    state.searchEngine = Object.hasOwn(SEARCH_ENGINES, data.searchEngine) ? data.searchEngine : "google";
+    state.showClock = data.showClock !== false;
+    state.showFrequent = data.showFrequent !== false;
+    state.numberKeys = data.numberKeys !== false;
+    state.density = DENSITIES.includes(data.density) ? data.density : "comfortable";
+    state.groupColumns = GROUP_COLUMNS.includes(data.groupColumns) ? data.groupColumns : "auto";
     state.wallpapers = Array.isArray(data.wallpapers)
       ? [...new Set(data.wallpapers.filter(id => typeof id === "string" && /^[\w-]{1,64}$/.test(id)))].slice(0, WALLPAPER_LIMIT) : [];
     state.wallpaperMode = WALLPAPER_MODES.includes(data.wallpaperMode) ? data.wallpaperMode : "off";
@@ -2521,7 +2682,7 @@
 
   // What the launchpad grid is drawn from; other changes (wallpaper, theme) need no rebuild.
   function gridSignature() {
-    try { return JSON.stringify([state.bookmarks, state.customCategories, defaultCategories, state.groupOrder, state.hiddenCategories, state.layoutLocked, state.iconLookup, state.linkTarget]); }
+    try { return JSON.stringify([state.bookmarks, state.customCategories, defaultCategories, state.groupOrder, state.hiddenCategories, state.layoutLocked, state.iconLookup, state.linkTarget, state.showFrequent, state.numberKeys]); }
     catch { return String(Date.now()); }
   }
   function refreshOpenSettings() {
@@ -2535,6 +2696,7 @@
     $("#icon-lookup-toggle").checked = !!state.iconLookup;
     $("#link-target").value = state.linkTarget;
     $("#show-names-toggle").checked = state.showNames !== false;
+    syncLaunchpadControls();
     void renderWallpaperSettings();
     renderBackupSettings();
   }
@@ -2592,6 +2754,8 @@
       if (e.persisted || storageSyncPending) scheduleStorageSync("pageshow");
     });
     document.addEventListener("visibilitychange", () => {
+      // Background tabs throttle timers, so the clock is brought up to date on return.
+      if (document.visibilityState === "visible" && isInitialized) renderClock();
       if (document.visibilityState === "visible" && storageSyncPending) {
         scheduleStorageSync("visible-pending");
       }
@@ -2599,6 +2763,11 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "local") return;
+      if (changes[USAGE_KEY]) {
+        const next = cleanUsage(changes[USAGE_KEY].newValue);
+        const json = JSON.stringify(next);
+        if (json !== usageJson) { siteUsage = next; usageJson = json; renderFrequent(); }
+      }
       // This tab's own writes already match the model, so they need no re-read at all.
       const external = Object.keys(changes).some(key => STORAGE_KEYS.includes(key) && JSON.stringify(changes[key].newValue) !== lastSaved[key]);
       if (external) scheduleStorageSync("storage-change");
@@ -2730,10 +2899,12 @@
   async function init() {
     let firstRun = false;
     try {
-      const data = await storageGet([...STORAGE_KEYS, ICON_CACHE_KEY]);
+      const data = await storageGet([...STORAGE_KEYS, ICON_CACHE_KEY, USAGE_KEY]);
       firstRun = data.bookmarks === undefined && data.shortcuts === undefined;
       if (data[ICON_CACHE_KEY] && typeof data[ICON_CACHE_KEY] === "object") iconCache = data[ICON_CACHE_KEY];
       applyStoredData(data);
+      siteUsage = cleanUsage(data[USAGE_KEY]);
+      usageJson = JSON.stringify(siteUsage);
       storageLoaded = true;
       void persist();
     } catch (err) {
