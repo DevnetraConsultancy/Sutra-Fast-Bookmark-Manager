@@ -1,36 +1,21 @@
-Sutra — New-Tab Launchpad
-Copyright (c) 2025-2026 Devnetra Consultancy. All rights reserved.
+MIT License
 
-This software, including its source code, design, graphics, icons, text and
-documentation (together, the "Software"), is the proprietary property of
-Devnetra Consultancy and is protected by copyright law and international
-treaties.
+Copyright (c) 2025-2026 Devnetra Consultancy
 
-PERMITTED USE
-You may install and use the Software, free of charge, for personal or internal
-business use, as distributed by Devnetra Consultancy through the Chrome Web
-Store or the official repository at
-https://github.com/DevnetraConsultancy/Sutra-ChromeExtension.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-RESTRICTIONS
-Without prior written permission from Devnetra Consultancy, you may not:
-  1. copy, modify, translate or create derivative works of the Software;
-  2. redistribute, sell, sublicense, rent or publish the Software, or any part
-     of it, including under a different name or branding;
-  3. remove or alter any copyright, trademark or licence notice;
-  4. use the Software, its code or its design to build a competing product.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-Viewing the source code in this repository does not grant any of these rights.
-
-TRADEMARKS
-"Sutra" and "Devnetra Consultancy", and their logos, are trademarks of
-Devnetra Consultancy.
-
-NO WARRANTY
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL DEVNETRA
-CONSULTANCY BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
-
-Licensing and permission requests: devnetraconsultancy@gmail.com
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

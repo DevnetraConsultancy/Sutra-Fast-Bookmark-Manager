@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.18.0-1f3a8a?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.20.0-1f3a8a?style=for-the-badge">
   <img alt="Chrome" src="https://img.shields.io/badge/Chrome-111%2B-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white">
   <img alt="Manifest V3" src="https://img.shields.io/badge/Manifest-V3-0f9d58?style=for-the-badge">
   <img alt="Local first" src="https://img.shields.io/badge/data-stays%20on%20device-b9f27c?style=for-the-badge&labelColor=17210d">
@@ -21,7 +21,7 @@
 <p align="center">
   <img alt="Built by Devnetra Consultancy" src="https://img.shields.io/badge/Built%20by-Devnetra%20Consultancy-0b1b44?style=flat-square&labelColor=c9a24b">
   <img alt="Works with Edge and Brave" src="https://img.shields.io/badge/also%20on-Edge%20%C2%B7%20Brave-555?style=flat-square">
-  <img alt="License" src="https://img.shields.io/badge/license-proprietary-lightgrey?style=flat-square">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0f9d58?style=flat-square">
 </p>
 
 <p align="center">
@@ -51,6 +51,8 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | 💾 | **Backups** | JSON export, plus an automatic **Sutra Backups** folder with 7 daily copies. |
 | 🧹 | **Duplicate cleaner** | Finds repeated sites and removes them in one click. |
 | 🔒 | **Drag lock** | Stops sites being moved by accident. |
+| 🧩 | **Icons-only mode** | Hide site names for a clean grid of icons. Names still show on hover. |
+| ↗️ | **Same tab or new tab** | Choose where a site opens. Ctrl-click always opens a new tab. |
 
 <p align="center">
   <img src="docs/screenshots/launchpad-light.png" alt="Sutra in light theme" width="900">
@@ -88,7 +90,7 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | Weather (`get.geojs.io`, `ipapi.co`, `api.open-meteo.com`, `wttr.in`) | Weather widget | Your IP address, for an approximate location. Cached 30 minutes. |
 | The website's own icon | A site has no icon saved in Chrome | The request, with no referrer |
 | Chrome speech recognition | Only when you tap the microphone | Audio goes to Google, under Google's policy |
-| `picsum.photos` | **Off by default.** "Online photos" setting | Nothing about you or your library |
+| `picsum.photos` | **Off by default.** "Online photos" setting (asks permission when turned on) | Nothing about you or your library |
 | `icons.duckduckgo.com` | **Off by default.** "Find missing icons online" | The site's domain only |
 
 `bookmarks` permission is **optional** and asked only when you click **Import from Chrome**. Full details: [privacy-policy.html](privacy-policy.html).
@@ -139,8 +141,7 @@ If Sutra saves you time, tell a friend who lives in too many tabs.
 
 ## License
 
-Copyright © 2025-2026 Devnetra Consultancy. All rights reserved. Proprietary software, see [LICENSE.txt](LICENSE.txt).
-Copying, modifying or redistributing any part without written permission is prohibited.
+Released under the [MIT License](LICENSE.txt). Copyright © 2025-2026 Devnetra Consultancy.
 
 ---
 

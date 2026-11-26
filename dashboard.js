@@ -1,4 +1,4 @@
-/*! Sutra © 2025-2026 Devnetra Consultancy. All rights reserved. Proprietary software; copying, modifying or redistributing without written permission is prohibited. See LICENSE. */
+/*! Sutra © 2025-2026 Devnetra Consultancy. Released under the MIT License; see LICENSE.txt. */
 (() => {
   "use strict";
   const $ = (s) => document.querySelector(s);
@@ -6,8 +6,10 @@
   const defaultCategories = ["Work", "Development", "Learning", "Design", "Tools", "Personal", "Finance", "Read later"];
   const RESERVED_GROUP = "all bookmarks"; // Legacy filter name; never a real group.
   const ACCENTS = ["emerald", "gold", "cyan", "violet", "crimson"];
+  // Where a clicked site opens: a new browser tab (the original behaviour) or this tab.
+  const LINK_TARGETS = ["newtab", "same"];
   let categories = [...defaultCategories];
-  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
+  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, linkTarget: "newtab", showNames: true, wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
   let toastTimer;
   let isInitialized = false;
   let storageSyncRunning = false;
@@ -25,7 +27,7 @@
   let searchIndex = new Map();
 
   // Wallpaper images themselves live in Cache Storage; only their list and settings are here.
-  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
+  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","linkTarget","showNames","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
   const storageGet = (keys) => new Promise((resolve, reject) => chrome.storage.local.get(keys, result => {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message || "Chrome storage read failed."));
@@ -41,6 +43,32 @@
     if (error) reject(new Error(error.message || "Chrome storage remove failed."));
     else resolve();
   }));
+  // chrome.permissions.request reports failures (for example a lost user gesture) through
+  // runtime.lastError; reading it keeps "Unchecked runtime.lastError" out of the error log.
+  const requestPermissions = (request) => new Promise(resolve => {
+    try {
+      chrome.permissions.request(request, granted => {
+        const error = chrome.runtime.lastError;
+        if (error) console.info("Sutra: permission request not completed:", error.message);
+        resolve(!error && granted === true);
+      });
+    } catch (err) {
+      console.info("Sutra: permission request not completed:", err);
+      resolve(false);
+    }
+  });
+  // Network extras (online photos, weather, icon look-ups) fail routinely when offline, on a
+  // slow network or behind an ad blocker. Those are not faults in Sutra, so they are noted at
+  // info level and kept out of the extension's error list; the user still gets a toast when
+  // they asked for something directly.
+  const noteNetworkIssue = (what, err) => console.info(`Sutra: ${what} unavailable (${err && err.message || err}).`);
+  const PICSUM_ORIGINS = ["https://picsum.photos/*", "https://fastly.picsum.photos/*"];
+  const opensInNewTab = () => state.linkTarget !== "same";
+  // Opens a web address the way the user chose in Settings › Appearance.
+  function openUrl(url) {
+    if (opensInNewTab()) window.open(url, "_blank", "noopener,noreferrer");
+    else location.assign(url);
+  }
 
   function escapeHtml(value="") {
     return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -76,6 +104,8 @@
       hiddenCategories: state.hiddenCategories,
       layoutLocked: state.layoutLocked,
       iconLookup: state.iconLookup,
+      linkTarget: state.linkTarget,
+      showNames: state.showNames,
       wallpapers: state.wallpapers,
       wallpaperMode: state.wallpaperMode,
       wallpaperOnline: state.wallpaperOnline,
@@ -145,7 +175,9 @@
   // origin, so later new tabs draw straight from the right place without any probing.
   const ICON_CACHE_KEY = "sutra_icon_cache";
   const ICON_TTL = 30 * 24 * 60 * 60 * 1000;
-  const ICON_MISS_TTL = 0; // Re-attempt missing icons on every reload so they auto-fetch.
+  // A site with no icon is asked again after a few hours (or at once via Settings › Refresh),
+  // not on every new tab: each probe of a missing file is logged by Chrome as a failed load.
+  const ICON_MISS_TTL = 6 * 60 * 60 * 1000;
   const ICON_TIMEOUT_MS = 5000;
   const ICON_CONCURRENCY = 6;
   const ICON_FROM_CHROME = "chrome";
@@ -209,17 +241,28 @@
   function isPublicHost(host) {
     return host.includes(".") && !/^[\d.]+$/.test(host) && !host.startsWith("[") && !/\.(local|localhost|internal|lan|home|corp|test|invalid)$/i.test(host);
   }
-  function iconCandidates(origin) {
+  // Candidate icon files in stages, most common first. A later stage is only tried when
+  // nothing in the earlier one loaded, so a site with an icon costs no failed requests.
+  function iconCandidateStages(origin) {
     const { protocol, host, hostname } = new URL(origin);
-    const paths = ["apple-touch-icon.png", "favicon.ico", "favicon.svg", "favicon.png"];
-    const urls = paths.map(path => `${origin}/${path}`);
-    const isPublic = isPublicHost(hostname);
-    // Many sites only serve their icons from one of the bare and www hosts.
-    if (isPublic && !hostname.startsWith("www.")) urls.push(`${protocol}//www.${host}/apple-touch-icon.png`, `${protocol}//www.${host}/favicon.ico`);
-    return urls;
+    const stages = [
+      [`${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`],
+      [`${origin}/favicon.svg`, `${origin}/favicon.png`]
+    ];
+    // Many sites only serve their icons from one of the bare and www hosts. Only a bare
+    // domain such as example.com gets a www twin; www.mail.google.com does not exist.
+    if (isPublicHost(hostname) && hostname.split(".").length === 2) stages.push([`${protocol}//www.${host}/apple-touch-icon.png`, `${protocol}//www.${host}/favicon.ico`]);
+    return stages;
   }
-  // Tries every candidate at once and answers with the best that loads, so one slow or
-  // dead host costs a single timeout rather than one for each file it is asked about.
+  async function findSiteIcon(origin) {
+    for (const stage of iconCandidateStages(origin)) {
+      const src = await firstLoadableIcon(stage);
+      if (src) return src;
+    }
+    return "";
+  }
+  // Tries a stage's candidates at once and answers with the best that loads, so one slow
+  // or dead host costs a single timeout rather than one for each file it is asked about.
   function firstLoadableIcon(urls) {
     return new Promise(resolve => {
       const usable = new Array(urls.length);
@@ -254,7 +297,7 @@
     if (!(await hasChromeIcon(url))) {
       // Offline, nothing can be learned about the site, so ask again next time.
       if (!navigator.onLine) return;
-      src = await firstLoadableIcon(iconCandidates(origin));
+      src = await findSiteIcon(origin);
       const { hostname } = new URL(origin);
       if (!src && state.iconLookup && isPublicHost(hostname)) src = await lookupIconOnline(hostname);
     }
@@ -279,7 +322,7 @@
     while (iconQueue.length) {
       const { origin, url } = iconQueue.shift();
       try { await resolveIcon(origin, url); }
-      catch (err) { console.warn("Sutra icon lookup failed:", origin, err); }
+      catch (err) { noteNetworkIssue(`icon for ${origin}`, err); }
       iconJobs.delete(origin);
     }
     iconWorkers -= 1;
@@ -314,7 +357,7 @@
   async function setIconLookup(enabled) {
     if (enabled) {
       // Reading the service's status needs host access, requested only by those who opt in.
-      const granted = await new Promise(resolve => chrome.permissions.request({ origins: ["https://icons.duckduckgo.com/*"] }, resolve));
+      const granted = await requestPermissions({ origins: ["https://icons.duckduckgo.com/*"] });
       if (!granted) {
         $("#icon-lookup-toggle").checked = false;
         showToast("Permission was not granted, so online lookup stays off.");
@@ -530,7 +573,9 @@
     const label = (item.name || "?").trim();
     const initial = escapeHtml(label.slice(0, 1).toUpperCase());
     const title = item.note ? `${item.name}\n${item.note}` : item.name;
-    return `<article class="bookmark-tile" data-bookmark-id="${escapeHtml(item.id)}" draggable="${canDrag}"><a class="tile-open" draggable="false" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"><span class="tile-icon${src ? " has-icon" : ""}" data-origin="${escapeHtml(origin)}" style="--hue:${hueFor(origin)}"><span class="tile-initial">${initial}</span>${src ? iconImageHtml(src, origin) : ""}</span><span class="tile-name">${escapeHtml(item.name)}</span></a><button class="tile-menu quiet-icon" type="button" aria-label="Actions for ${escapeHtml(item.name)}" title="Edit, move or delete">•••</button></article>`;
+    // Ctrl/⌘-click and middle-click still open a background tab in "same tab" mode.
+    const target = opensInNewTab() ? ` target="_blank"` : "";
+    return `<article class="bookmark-tile" data-bookmark-id="${escapeHtml(item.id)}" draggable="${canDrag}"><a class="tile-open" draggable="false" href="${escapeHtml(item.url)}"${target} rel="noopener noreferrer" title="${escapeHtml(title)}" aria-label="${escapeHtml(item.name)}"><span class="tile-icon${src ? " has-icon" : ""}" data-origin="${escapeHtml(origin)}" style="--hue:${hueFor(origin)}"><span class="tile-initial">${initial}</span>${src ? iconImageHtml(src, origin) : ""}</span><span class="tile-name">${escapeHtml(item.name)}</span></a><button class="tile-menu quiet-icon" type="button" aria-label="Actions for ${escapeHtml(item.name)}" title="Edit, move or delete">•••</button></article>`;
   }
   function renderGrid() {
     const hiddenSet = new Set(state.hiddenCategories || []);
@@ -794,6 +839,9 @@
   function renderManageCategories() {
     const box = $("#manage-categories");
     const hiddenSet = new Set(state.hiddenCategories || []);
+    const names = orderedGroupNames();
+    const hiddenCount = names.filter(name => hiddenSet.has(name)).length;
+    $("#groups-count").textContent = `${names.length} group${names.length === 1 ? "" : "s"}${hiddenCount ? ` · ${hiddenCount} hidden` : ""}`;
     box.innerHTML = orderedGroupNames().map(c => `<div class="manage-category-row"><span class="manage-category-name">${escapeHtml(c)}</span><label class="hidden-group-toggle" title="Hide this group and its sites from the launchpad"><input type="checkbox" data-hidden-category="${escapeHtml(c)}" ${hiddenSet.has(c) ? "checked" : ""}>Hide</label><button type="button" data-rename="${escapeHtml(c)}">Rename</button><button type="button" data-delete="${escapeHtml(c)}">Delete</button></div>`).join("");
   }
   async function createCategory() {
@@ -1063,7 +1111,7 @@
     try {
       // Must run straight after the click above: Chrome requires a user gesture, and
       // this resolves immediately when the permission was granted earlier.
-      const granted = await new Promise(resolve => chrome.permissions.request({ permissions: ["bookmarks"] }, resolve));
+      const granted = await requestPermissions({ permissions: ["bookmarks"] });
       if (!granted) {
         showToast("Bookmarks permission was not granted.");
         return;
@@ -1135,7 +1183,7 @@
     }
   }
   function backupData(backgroundImage) {
-    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup } };
+    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup, linkTarget: state.linkTarget, showNames: state.showNames } };
   }
   async function exportBackup() {
     const backup = backupData(await currentWallpaperDataUrl());
@@ -1282,6 +1330,8 @@
     const size = Number(prefs.iconSize);
     if (size >= 20 && size <= 88) state.iconSize = size;
     if (typeof prefs.layoutLocked === "boolean") state.layoutLocked = prefs.layoutLocked;
+    if (LINK_TARGETS.includes(prefs.linkTarget)) state.linkTarget = prefs.linkTarget;
+    if (typeof prefs.showNames === "boolean") state.showNames = prefs.showNames;
     if (WALLPAPER_MODES.includes(prefs.wallpaperMode)) state.wallpaperMode = prefs.wallpaperMode;
     if (typeof prefs.wallpaperOnline === "boolean") state.wallpaperOnline = prefs.wallpaperOnline;
     if (Array.isArray(prefs.hiddenCategories)) state.hiddenCategories = prefs.hiddenCategories.filter(c => typeof c === "string").slice(0, 100);
@@ -1353,11 +1403,16 @@
   function scheduleBackup() {
     if (!backupSupported) return;
     clearTimeout(backupTimer);
-    backupTimer = setTimeout(() => { void writeBackup(); }, BACKUP_DELAY_MS);
+    backupTimer = setTimeout(() => {
+      writeBackup().catch(err => { console.error("Sutra folder backup failed:", err); setBackupStatus("error", err.message || "could not write the file."); });
+    }, BACKUP_DELAY_MS);
   }
   async function writeBackup({ force = false } = {}) {
     if (!storageLoaded || backupHeld || !await refreshBackupFolder()) return false;
     while (backupRunning) await backupRunning;
+    // Another tab or the Stop button may change the folder while this write is waiting.
+    const folder = backupFolder;
+    if (!folder) return false;
     backupRunning = (async () => {
       // An empty library never replaces a saved one, so a reinstall cannot wipe the backup.
       if (!state.bookmarks.length) return false;
@@ -1368,7 +1423,7 @@
         if (backupStatus === "off") backupStatus = "saved";
         return true;
       }
-      if (await backupFolder.queryPermission({ mode: "readwrite" }) !== "granted") {
+      if (await folder.queryPermission({ mode: "readwrite" }) !== "granted") {
         setBackupStatus("permission");
         return false;
       }
@@ -1376,13 +1431,13 @@
         const text = JSON.stringify(data, null, 2);
         const day = data.exportedAt.slice(0, 10);
         for (const name of [BACKUP_FILE, `sutra-backup-${day}.json`]) {
-          const writable = await (await backupFolder.getFileHandle(name, { create: true })).createWritable();
+          const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
           await writable.write(text);
           await writable.close();
         }
         const daily = [];
-        for await (const [name, entry] of backupFolder.entries()) if (entry.kind === "file" && BACKUP_DAILY.test(name)) daily.push(name);
-        for (const name of daily.sort().slice(0, -BACKUP_KEEP_DAYS)) await backupFolder.removeEntry(name).catch(() => {});
+        for await (const [name, entry] of folder.entries()) if (entry.kind === "file" && BACKUP_DAILY.test(name)) daily.push(name);
+        for (const name of daily.sort().slice(0, -BACKUP_KEEP_DAYS)) await folder.removeEntry(name).catch(() => {});
         try { localStorage.setItem(BACKUP_STATUS_KEY, JSON.stringify({ signature, at: Date.now() })); } catch {}
         setBackupStatus("saved");
         return true;
@@ -1508,10 +1563,15 @@
     renderBackupSettings();
   }
   function wireBackupSettings() {
-    $("#backup-choose-btn").addEventListener("click", chooseBackupFolder);
-    $("#backup-allow-btn").addEventListener("click", allowBackupFolder);
-    $("#backup-restore-btn").addEventListener("click", restoreFromFolder);
-    $("#backup-stop-btn").addEventListener("click", stopBackupFolder);
+    // Folder access can fail at any step (folder moved, permission revoked); say so instead of an uncaught error.
+    const guarded = action => () => action().catch(err => {
+      console.error("Sutra backup folder action failed:", err);
+      showToast("Could not reach the backup folder. Choose it again in Settings › Library.");
+    });
+    $("#backup-choose-btn").addEventListener("click", guarded(chooseBackupFolder));
+    $("#backup-allow-btn").addEventListener("click", guarded(allowBackupFolder));
+    $("#backup-restore-btn").addEventListener("click", guarded(restoreFromFolder));
+    $("#backup-stop-btn").addEventListener("click", guarded(stopBackupFolder));
   }
   async function startBackupFolder() {
     try { await writeBackup(); }
@@ -1635,7 +1695,7 @@
         await writeWallpaperBlob(ONLINE_NEXT_PATH, await fetchOnlinePhoto());
         writeBootHints();
       } catch (err) {
-        console.warn("Sutra online wallpaper prefetch failed:", err);
+        noteNetworkIssue("online photo prefetch", err);
       } finally {
         onlinePrefetch = null;
       }
@@ -1646,7 +1706,7 @@
     await onlinePrefetch;
     let blob = await readWallpaperBlob(ONLINE_NEXT_PATH);
     if (!blob) {
-      try { blob = await fetchOnlinePhoto(); } catch (err) { console.warn("Sutra online wallpaper failed:", err); return false; }
+      try { blob = await fetchOnlinePhoto(); } catch (err) { noteNetworkIssue("online photo", err); return false; }
     }
     await writeWallpaperBlob(wallpaperPath(ONLINE_WALLPAPER), blob);
     await deleteWallpaperBlob(ONLINE_NEXT_PATH);
@@ -1705,6 +1765,8 @@
   // boot.js reads these before first paint to show the right wallpaper straight away,
   // including the one this load is about to switch to.
   function writeBootHints() {
+    // Until saved data is read the page holds defaults, which must not replace the real hints.
+    if (!storageLoaded) return;
     const hint = (key, changedAt, path) => ({
       token: wallpaperToken(key, changedAt),
       path: key === DEFAULT_WALLPAPER ? "" : path || wallpaperPath(key)
@@ -1713,6 +1775,7 @@
       theme: state.theme,
       accent: state.accentColor,
       iconSize: state.iconSize,
+      hideNames: state.showNames === false,
       wallpaper: hint(state.wallpaperCurrent, state.wallpaperChangedAt)
     };
     if (wallpaperRotates() && state.wallpaperMode === "newtab") {
@@ -1790,6 +1853,14 @@
     setCurrentWallpaper(key, key === DEFAULT_WALLPAPER ? -1 : wallpaperPool().indexOf(key));
   }
   async function setWallpaperOnline(enabled) {
+    if (enabled) {
+      // Asked straight from the toggle's click, while Chrome still counts it as a user gesture.
+      if (!await requestPermissions({ origins: PICSUM_ORIGINS })) {
+        $("#wallpaper-online").checked = false;
+        showToast("Permission was not granted, so online photos stay off.");
+        return;
+      }
+    }
     state.wallpaperOnline = enabled;
     if (!enabled) {
       await deleteWallpaperBlob(ONLINE_NEXT_PATH);
@@ -1909,6 +1980,8 @@
   function applyPreferences() {
     document.body.classList.toggle("light-theme", state.theme === "light");
     document.body.dataset.accent = state.accentColor || "emerald";
+    // Icons-only mode hides the labels with CSS, so no grid rebuild is needed.
+    document.body.classList.toggle("hide-site-names", state.showNames === false);
     document.documentElement.style.setProperty("--icon-size", `${state.iconSize || 48}px`);
     $("#theme-btn").setAttribute("aria-label", state.theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
     updateAccentPickerUI();
@@ -2084,7 +2157,7 @@
           if (!query) return;
           e.preventDefault();
           if (getVisibleTiles().length) openTile(0);
-          else window.open("https://www.google.com/search?q=" + encodeURIComponent(query), "_blank", "noopener,noreferrer");
+          else openUrl("https://www.google.com/search?q=" + encodeURIComponent(query));
         } else if (e.key === "Escape") {
           if (searchInput.value) {
             searchInput.value = "";
@@ -2277,9 +2350,11 @@
     $("#icon-size-label").textContent = `${state.iconSize || 48} px`;
     $("#layout-lock-toggle").checked = !!state.layoutLocked;
     $("#icon-lookup-toggle").checked = !!state.iconLookup;
+    $("#link-target").value = state.linkTarget;
+    $("#show-names-toggle").checked = state.showNames !== false;
     void renderWallpaperSettings();
     renderBackupSettings();
-    void refreshBackupFolder().then(renderBackupSettings);
+    refreshBackupFolder().then(renderBackupSettings, err => console.warn("Sutra backup folder unavailable:", err));
     openModal("settings-modal");
   }
   function wireEvents() {
@@ -2300,10 +2375,20 @@
       void persist();
     });
     $("#layout-lock-toggle").addEventListener("change", e => { state.layoutLocked = !!e.target.checked; renderGrid(); void persist(); });
+    $("#show-names-toggle").addEventListener("change", e => { state.showNames = !!e.target.checked; applyPreferences(); void persist(); });
+    $("#link-target").addEventListener("change", e => {
+      if (!LINK_TARGETS.includes(e.target.value)) return;
+      state.linkTarget = e.target.value;
+      renderGrid();
+      void persist();
+      showToast(opensInNewTab() ? "Sites will open in a new tab" : "Sites will open in this tab");
+    });
     $("#icon-lookup-toggle").addEventListener("change", e => setIconLookup(!!e.target.checked));
     $("#refresh-icons-btn").addEventListener("click", () => { refreshIcons(); showToast("Fetching site icons again"); });
     $("#import-chrome-btn").addEventListener("click", importFromChrome);
-    $("#settings-export-btn").addEventListener("click", exportBackup);
+    $("#settings-export-btn").addEventListener("click", () => {
+      exportBackup().catch(err => { console.error("Sutra export failed:", err); showToast("Could not export the backup."); });
+    });
     $("#import-file").addEventListener("change", e => importBackup(e.target.files[0]));
     wireWallpaperSettings();
     wireBackupSettings();
@@ -2393,6 +2478,8 @@
       ? [...new Set(data.hiddenCategories.filter(c => typeof c === "string" && c.trim()).map(c => c.trim()))].slice(0, 200) : [];
     state.layoutLocked = data.layoutLocked === true;
     state.iconLookup = data.iconLookup === true;
+    state.linkTarget = LINK_TARGETS.includes(data.linkTarget) ? data.linkTarget : "newtab";
+    state.showNames = data.showNames !== false;
     state.wallpapers = Array.isArray(data.wallpapers)
       ? [...new Set(data.wallpapers.filter(id => typeof id === "string" && /^[\w-]{1,64}$/.test(id)))].slice(0, WALLPAPER_LIMIT) : [];
     state.wallpaperMode = WALLPAPER_MODES.includes(data.wallpaperMode) ? data.wallpaperMode : "off";
@@ -2434,7 +2521,7 @@
 
   // What the launchpad grid is drawn from; other changes (wallpaper, theme) need no rebuild.
   function gridSignature() {
-    try { return JSON.stringify([state.bookmarks, state.customCategories, defaultCategories, state.groupOrder, state.hiddenCategories, state.layoutLocked, state.iconLookup]); }
+    try { return JSON.stringify([state.bookmarks, state.customCategories, defaultCategories, state.groupOrder, state.hiddenCategories, state.layoutLocked, state.iconLookup, state.linkTarget]); }
     catch { return String(Date.now()); }
   }
   function refreshOpenSettings() {
@@ -2446,6 +2533,8 @@
     $("#icon-size-label").textContent = `${state.iconSize || 48} px`;
     $("#layout-lock-toggle").checked = !!state.layoutLocked;
     $("#icon-lookup-toggle").checked = !!state.iconLookup;
+    $("#link-target").value = state.linkTarget;
+    $("#show-names-toggle").checked = state.showNames !== false;
     void renderWallpaperSettings();
     renderBackupSettings();
   }
@@ -2632,7 +2721,7 @@
       await storageSet({ [WEATHER_CACHE_KEY]: weatherData });
       renderWeatherUI(weatherData, unit);
     } catch (err) {
-      console.warn("Sutra weather fetch:", err);
+      noteNetworkIssue("weather", err);
       if (!cached) $("#weather-city").textContent = "Unavailable";
       if (forceRefresh) showToast("Could not refresh the weather.");
     }
@@ -2665,14 +2754,6 @@
       storageSyncPending = false;
       scheduleStorageSync("startup-queued");
     }
-  }
-  // Unpacked developer copies get live reload; the store package does not ship the file.
-  function startDevReload() {
-    if ("update_url" in chrome.runtime.getManifest()) return;
-    const script = document.createElement("script");
-    script.src = "hot-reload.js";
-    script.onerror = () => script.remove();
-    document.body.appendChild(script);
   }
   // Register listeners synchronously so the first pageshow/focus is not missed
   // while the initial asynchronous Chrome storage read is still pending.

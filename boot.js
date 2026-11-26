@@ -1,10 +1,11 @@
-/*! Sutra © 2025-2026 Devnetra Consultancy. All rights reserved. Proprietary software; copying, modifying or redistributing without written permission is prohibited. See LICENSE. */
+/*! Sutra © 2025-2026 Devnetra Consultancy. Released under the MIT License; see LICENSE.txt. */
 // Runs before first paint so the saved theme, accent, icon size and wallpaper appear at
 // once instead of flashing the defaults. dashboard.js writes these hints.
 try {
   const boot = JSON.parse(localStorage.getItem("sutra_boot") || "{}");
   if (boot.theme === "light") document.body.classList.add("light-theme");
   if (boot.accent) document.body.dataset.accent = boot.accent;
+  if (boot.hideNames) document.body.classList.add("hide-site-names");
   if (boot.iconSize) document.documentElement.style.setProperty("--icon-size", `${boot.iconSize}px`);
 
   // In "every new tab" mode this load is about to switch wallpaper, so show that one now.
