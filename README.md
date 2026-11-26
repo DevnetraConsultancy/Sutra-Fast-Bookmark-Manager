@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.21.0-1f3a8a?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.22.0-1f3a8a?style=for-the-badge">
   <img alt="Chrome" src="https://img.shields.io/badge/Chrome-111%2B-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white">
   <img alt="Manifest V3" src="https://img.shields.io/badge/Manifest-V3-0f9d58?style=for-the-badge">
   <img alt="Local first" src="https://img.shields.io/badge/data-stays%20on%20device-b9f27c?style=for-the-badge&labelColor=17210d">
@@ -56,6 +56,7 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | ⭐ | **Frequent sites** | Your most-opened sites in a row on top, counted on this device only. |
 | 🔢 | **Number keys** | Press **1–9** to open the first nine sites instantly. |
 | 🕒 | **Clock and greeting** | Time, date and a friendly greeting above your sites. |
+| 💬 | **Quotes** | A line from a scientist, writer or thinker at the bottom of the screen. New on every tab, every 5–30 minutes, hourly or daily. |
 | 🌐 | **Your search engine** | Google, Bing, DuckDuckGo or Brave Search for web searches. |
 | 📐 | **Columns and density** | Fix the number of group columns, or switch to a compact layout. |
 
@@ -95,6 +96,7 @@ Browser bookmark menus are slow to open and easy to forget. **Sutra replaces you
 | Weather (`get.geojs.io`, `ipapi.co`, `api.open-meteo.com`, `wttr.in`) | Weather widget | Your IP address, for an approximate location. Cached 30 minutes. |
 | The website's own icon | A site has no icon saved in Chrome | The request, with no referrer |
 | Chrome speech recognition | Only when you tap the microphone | Audio goes to Google, under Google's policy |
+| `api.quotable.kurokeita.dev` (fallback `dummyjson.com`) | Quote line (turn off in Settings › Launchpad) | Nothing about you or your library. Quotes are fetched 50 at a time. |
 | `picsum.photos` | **Off by default.** "Online photos" setting (asks permission when turned on) | Nothing about you or your library |
 | `icons.duckduckgo.com` | **Off by default.** "Find missing icons online" | The site's domain only |
 

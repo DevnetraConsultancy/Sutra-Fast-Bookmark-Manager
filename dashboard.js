@@ -17,8 +17,9 @@
   };
   const DENSITIES = ["comfortable", "compact"];
   const GROUP_COLUMNS = ["auto", "1", "2", "3", "4", "5", "6"];
+  const QUOTE_MODES = ["off", "newtab", "5min", "10min", "30min", "hour", "day"];
   let categories = [...defaultCategories];
-  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, linkTarget: "newtab", showNames: true, searchEngine: "google", showClock: true, showFrequent: true, numberKeys: true, density: "comfortable", groupColumns: "auto", wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
+  let state = { bookmarks: [], theme: "dark", accentColor: "emerald", customCategories: [], iconSize: 48, groupOrder: [], hiddenCategories: [], layoutLocked: false, iconLookup: false, linkTarget: "newtab", showNames: true, searchEngine: "google", showClock: true, showFrequent: true, numberKeys: true, density: "comfortable", groupColumns: "auto", quoteMode: "newtab", wallpapers: [], wallpaperMode: "off", wallpaperOnline: false, wallpaperCurrent: "default", wallpaperCursor: -1, wallpaperChangedAt: 0 };
   let toastTimer;
   let isInitialized = false;
   let storageSyncRunning = false;
@@ -36,7 +37,7 @@
   let searchIndex = new Map();
 
   // Wallpaper images themselves live in Cache Storage; only their list and settings are here.
-  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","linkTarget","showNames","searchEngine","showClock","showFrequent","numberKeys","density","groupColumns","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
+  const STORAGE_KEYS = ["bookmarks","shortcuts","theme","accentColor","customCategories","categoryNames","iconSize","groupOrder","hiddenCategories","layoutLocked","iconLookup","linkTarget","showNames","searchEngine","showClock","showFrequent","numberKeys","density","groupColumns","quoteMode","wallpapers","wallpaperMode","wallpaperOnline","wallpaperCurrent","wallpaperCursor","wallpaperChangedAt"];
   const storageGet = (keys) => new Promise((resolve, reject) => chrome.storage.local.get(keys, result => {
     const error = chrome.runtime.lastError;
     if (error) reject(new Error(error.message || "Chrome storage read failed."));
@@ -122,6 +123,7 @@
       numberKeys: state.numberKeys,
       density: state.density,
       groupColumns: state.groupColumns,
+      quoteMode: state.quoteMode,
       wallpapers: state.wallpapers,
       wallpaperMode: state.wallpaperMode,
       wallpaperOnline: state.wallpaperOnline,
@@ -1274,7 +1276,7 @@
     }
   }
   function backupData(backgroundImage) {
-    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup, linkTarget: state.linkTarget, showNames: state.showNames, searchEngine: state.searchEngine, showClock: state.showClock, showFrequent: state.showFrequent, numberKeys: state.numberKeys, density: state.density, groupColumns: state.groupColumns } };
+    return { app: "Sutra", schemaVersion: 1, exportedAt: new Date().toISOString(), bookmarks: state.bookmarks, preferences: { ...(backgroundImage !== undefined && { backgroundImage }), wallpaperMode: state.wallpaperMode, wallpaperOnline: state.wallpaperOnline, theme: state.theme, accentColor: state.accentColor || "emerald", customCategories: state.customCategories, categoryNames: defaultCategories, iconSize: state.iconSize, groupOrder: state.groupOrder, hiddenCategories: state.hiddenCategories, layoutLocked: state.layoutLocked, iconLookup: state.iconLookup, linkTarget: state.linkTarget, showNames: state.showNames, searchEngine: state.searchEngine, showClock: state.showClock, showFrequent: state.showFrequent, numberKeys: state.numberKeys, density: state.density, groupColumns: state.groupColumns, quoteMode: state.quoteMode } };
   }
   async function exportBackup() {
     const backup = backupData(await currentWallpaperDataUrl());
@@ -1427,6 +1429,7 @@
     for (const key of ["showClock", "showFrequent", "numberKeys"]) if (typeof prefs[key] === "boolean") state[key] = prefs[key];
     if (DENSITIES.includes(prefs.density)) state.density = prefs.density;
     if (GROUP_COLUMNS.includes(prefs.groupColumns)) state.groupColumns = prefs.groupColumns;
+    if (QUOTE_MODES.includes(prefs.quoteMode)) state.quoteMode = prefs.quoteMode;
     if (WALLPAPER_MODES.includes(prefs.wallpaperMode)) state.wallpaperMode = prefs.wallpaperMode;
     if (typeof prefs.wallpaperOnline === "boolean") state.wallpaperOnline = prefs.wallpaperOnline;
     if (Array.isArray(prefs.hiddenCategories)) state.hiddenCategories = prefs.hiddenCategories.filter(c => typeof c === "string").slice(0, 100);
@@ -2075,6 +2078,158 @@
     return blob ? blobToDataUrl(blob) : "";
   }
 
+  // --- Quotes ---
+  // Short lines from scientists, writers, thinkers and other well-known people, fetched from
+  // free public APIs. Nothing is bundled: a batch of up to 50 is downloaded at a time, kept in
+  // local storage and shown one by one, so the network is used only when the batch runs low.
+  const QUOTES_KEY = "sutra_quotes";
+  const QUOTE_INTERVALS = { "5min": 5 * 60 * 1000, "10min": 10 * 60 * 1000, "30min": 30 * 60 * 1000, hour: 60 * 60 * 1000, day: 24 * 60 * 60 * 1000 };
+  const QUOTE_MAX_LENGTH = 160;
+  const QUOTE_REFILL_AT = 5;
+  const QUOTE_POOL_LIMIT = 100;
+  const QUOTABLE_URL = "https://api.quotable.kurokeita.dev/api/quotes/random?" + new URLSearchParams({
+    limit: "50", maxLength: String(QUOTE_MAX_LENGTH), tags: "Motivational|Inspirational|Wisdom|Success|Famous Quotes"
+  });
+  const DUMMYJSON_URL = "https://dummyjson.com/quotes/random/50";
+  let quoteStore = { pool: [], current: null, shownAt: 0 };
+  let quoteTimer = null;
+  let quoteDue = false;
+  let quoteFetching = null;
+  let quoteBusy = false;
+
+  function cleanQuote(text, author) {
+    const q = typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+    const a = typeof author === "string" ? author.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+    return q && q.length <= QUOTE_MAX_LENGTH ? { q, a } : null;
+  }
+  function cleanQuoteStore(raw) {
+    const valid = item => item && cleanQuote(item.q, item.a);
+    return {
+      pool: Array.isArray(raw?.pool) ? raw.pool.map(valid).filter(Boolean).slice(0, QUOTE_POOL_LIMIT) : [],
+      current: valid(raw?.current) || null,
+      shownAt: Number.isFinite(raw?.shownAt) ? raw.shownAt : 0
+    };
+  }
+  // The fallback service writes Every Word Capitalised ("Isn'T"); turn that into a sentence.
+  function sentenceCase(text) {
+    const words = text.split(" ");
+    const capitalised = words.filter(w => /^[A-Z]/.test(w)).length;
+    if (words.length < 4 || capitalised / words.length < 0.75) return text;
+    return text.toLowerCase()
+      .replace(/(^|[.!?]\s+)([a-z])/g, (m, lead, letter) => lead + letter.toUpperCase())
+      .replace(/\bi\b/g, "I")
+      .replace(/\bi'(m|ve|ll|d)\b/g, "I'$1");
+  }
+  async function fetchQuoteBatch() {
+    try {
+      const data = await fetchJson(QUOTABLE_URL);
+      const batch = (data?.quotes || []).map(item => cleanQuote(item?.content, item?.author?.name)).filter(Boolean);
+      if (batch.length) return batch;
+    } catch (err) { noteNetworkIssue("quotes from Quotable", err); }
+    const data = await fetchJson(DUMMYJSON_URL);
+    return (Array.isArray(data) ? data : []).map(item => cleanQuote(typeof item?.quote === "string" ? sentenceCase(item.quote) : "", item?.author)).filter(Boolean);
+  }
+  function saveQuotes() {
+    storageSet({ [QUOTES_KEY]: quoteStore }).catch(err => noteNetworkIssue("quote cache", err));
+  }
+  function refillQuotes() {
+    if (quoteFetching) return quoteFetching;
+    if (!navigator.onLine) return Promise.resolve();
+    quoteFetching = (async () => {
+      try {
+        const batch = await fetchQuoteBatch();
+        const seen = new Set([...quoteStore.pool, quoteStore.current].filter(Boolean).map(item => item.q));
+        quoteStore.pool = [...quoteStore.pool, ...batch.filter(item => !seen.has(item.q) && seen.add(item.q))].slice(0, QUOTE_POOL_LIMIT);
+        saveQuotes();
+      } catch (err) {
+        noteNetworkIssue("quotes", err);
+      } finally {
+        quoteFetching = null;
+      }
+    })();
+    return quoteFetching;
+  }
+  function renderQuote() {
+    const bar = $("#quote-bar");
+    const quote = state.quoteMode !== "off" ? quoteStore.current : null;
+    bar.hidden = !quote;
+    if (!quote) return;
+    $("#quote-text").textContent = `“${quote.q}”`;
+    $("#quote-author").textContent = quote.a ? `— ${quote.a}` : "";
+  }
+  // Shows the next quote from the batch, topping the batch up in the background.
+  async function advanceQuote({ manual = false } = {}) {
+    if (quoteBusy) return;
+    quoteBusy = true;
+    try {
+      if (!quoteStore.pool.length) await refillQuotes();
+      const next = quoteStore.pool.shift();
+      if (!next) {
+        if (manual) showToast("Could not load a new quote. Check your connection.");
+        renderQuote();
+        return;
+      }
+      quoteStore.current = next;
+      quoteStore.shownAt = Date.now();
+      saveQuotes();
+      const bar = $("#quote-bar");
+      bar.classList.add("is-changing");
+      setTimeout(() => { renderQuote(); bar.classList.remove("is-changing"); }, bar.hidden ? 0 : 180);
+      if (quoteStore.pool.length < QUOTE_REFILL_AT) void refillQuotes();
+    } finally {
+      quoteBusy = false;
+      scheduleQuote();
+    }
+  }
+  function quoteIsDue() {
+    const interval = QUOTE_INTERVALS[state.quoteMode];
+    return !!interval && (!quoteStore.current || Date.now() - quoteStore.shownAt >= interval);
+  }
+  function scheduleQuote() {
+    clearTimeout(quoteTimer);
+    quoteDue = false;
+    const interval = QUOTE_INTERVALS[state.quoteMode];
+    if (!interval) return;
+    const delay = Math.max(1000, quoteStore.shownAt + interval - Date.now());
+    quoteTimer = setTimeout(async () => {
+      // A background tab waits until it is looked at, and follows a change another tab made.
+      if (document.hidden) { quoteDue = true; return; }
+      await followStoredQuote();
+      if (quoteIsDue()) void advanceQuote(); else scheduleQuote();
+    }, Math.min(delay, 2 ** 31 - 1));
+  }
+  async function followStoredQuote() {
+    try {
+      const stored = cleanQuoteStore((await storageGet([QUOTES_KEY]))[QUOTES_KEY]);
+      if (stored.shownAt > quoteStore.shownAt) { quoteStore = stored; renderQuote(); }
+    } catch {}
+  }
+  async function applyQuoteMode() {
+    clearTimeout(quoteTimer);
+    if (state.quoteMode === "off") { renderQuote(); return; }
+    if (state.quoteMode === "newtab" || quoteIsDue()) await advanceQuote();
+    else { renderQuote(); scheduleQuote(); }
+  }
+  async function startQuotes(saved) {
+    quoteStore = cleanQuoteStore(saved);
+    // Show the last quote at once, so the line is never empty while a new one loads.
+    renderQuote();
+    await applyQuoteMode();
+  }
+  function wireQuotes() {
+    $("#quote-next").addEventListener("click", () => { void advanceQuote({ manual: true }); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden || !isInitialized || !QUOTE_INTERVALS[state.quoteMode]) return;
+      void followStoredQuote().then(() => { if (quoteDue || quoteIsDue()) void advanceQuote(); });
+    });
+    // With a timed mode every open tab shows the same quote; "every new tab" keeps each tab's own.
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes[QUOTES_KEY] || !QUOTE_INTERVALS[state.quoteMode]) return;
+      const next = cleanQuoteStore(changes[QUOTES_KEY].newValue);
+      if (next.shownAt > quoteStore.shownAt) { quoteStore = next; renderQuote(); scheduleQuote(); }
+    });
+  }
+
   // --- Clock and greeting ---
   let clockTimer = null;
   function greetingFor(hour) {
@@ -2482,6 +2637,7 @@
     $("#search-engine").value = state.searchEngine;
     $("#density").value = state.density;
     $("#group-columns").value = state.groupColumns;
+    $("#quote-mode").value = state.quoteMode;
   }
   function openSettings() {
     renderManageCategories();
@@ -2517,6 +2673,13 @@
       void persist();
     });
     $("#layout-lock-toggle").addEventListener("change", e => { state.layoutLocked = !!e.target.checked; renderGrid(); void persist(); });
+    $("#quote-mode").addEventListener("change", e => {
+      if (!QUOTE_MODES.includes(e.target.value)) return;
+      state.quoteMode = e.target.value;
+      void persist();
+      void applyQuoteMode();
+    });
+    wireQuotes();
     $("#clock-toggle").addEventListener("change", e => { state.showClock = !!e.target.checked; applyPreferences(); void persist(); });
     $("#frequent-toggle").addEventListener("change", e => { state.showFrequent = !!e.target.checked; renderFrequent(); void persist(); });
     $("#frequent-reset").addEventListener("click", async () => {
@@ -2641,6 +2804,7 @@
     state.numberKeys = data.numberKeys !== false;
     state.density = DENSITIES.includes(data.density) ? data.density : "comfortable";
     state.groupColumns = GROUP_COLUMNS.includes(data.groupColumns) ? data.groupColumns : "auto";
+    state.quoteMode = QUOTE_MODES.includes(data.quoteMode) ? data.quoteMode : "newtab";
     state.wallpapers = Array.isArray(data.wallpapers)
       ? [...new Set(data.wallpapers.filter(id => typeof id === "string" && /^[\w-]{1,64}$/.test(id)))].slice(0, WALLPAPER_LIMIT) : [];
     state.wallpaperMode = WALLPAPER_MODES.includes(data.wallpaperMode) ? data.wallpaperMode : "off";
@@ -2714,12 +2878,14 @@
       }
       // Open dialogs are synced too: their next save must start from what other tabs saved.
       const gridBefore = gridSignature();
+      const quoteModeBefore = state.quoteMode;
       const result = applyStoredData(data);
       storageLoaded = true;
       storageRetries = 0;
       if (result.changed) {
         applyPreferences();
         if (gridSignature() !== gridBefore) renderAll();
+        if (quoteModeBefore !== state.quoteMode) void applyQuoteMode();
         void applyWallpaper();
         scheduleWallpaperTimer();
         refreshOpenSettings();
@@ -2898,8 +3064,10 @@
 
   async function init() {
     let firstRun = false;
+    let savedQuotes = null;
     try {
-      const data = await storageGet([...STORAGE_KEYS, ICON_CACHE_KEY, USAGE_KEY]);
+      const data = await storageGet([...STORAGE_KEYS, ICON_CACHE_KEY, USAGE_KEY, QUOTES_KEY]);
+      savedQuotes = data[QUOTES_KEY];
       firstRun = data.bookmarks === undefined && data.shortcuts === undefined;
       if (data[ICON_CACHE_KEY] && typeof data[ICON_CACHE_KEY] === "object") iconCache = data[ICON_CACHE_KEY];
       applyStoredData(data);
@@ -2918,6 +3086,7 @@
     renderAll();
     isInitialized = true;
     void startWallpapers();
+    startQuotes(savedQuotes).catch(err => noteNetworkIssue("quotes", err));
     // Network-bound extras wait until the launchpad has painted.
     (window.requestIdleCallback || setTimeout)(() => { void fetchWeather(); void startBackupFolder(); });
     if (firstRun && backupSupported) setTimeout(() => showToast(`Moving from another computer? Settings › Library › Backup folder restores your “${BACKUP_FOLDER_NAME}”.`), 1200);
