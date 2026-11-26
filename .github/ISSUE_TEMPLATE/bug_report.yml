@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in Sutra does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a new tab
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Sutra version
+      description: Shown on Sutra's card in chrome://extensions
+      placeholder: "2.23.0"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: "Chrome 131 on Windows 11"
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Errors, if any
+      description: Anything shown under "Errors" on Sutra's card in chrome://extensions
+      render: text
